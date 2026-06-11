@@ -549,20 +549,3 @@ class Client(Helper):
         async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency, max_page_concurrency=pages_concurrency,
                                  video_link_extractor=extractor_html):
             yield video.init()
-
-async def main():
-    core = BaseCore()
-    core.enable_logging(level=logging.DEBUG)
-    client = Client(core=core)
-    video = await client.get_video("https://www.youporn.com/watch/230328731/")
-    print(video.pornstars)
-    author = await video.author()
-    print(author.name)
-
-    pornstars = video.pornstars()
-    async for star in pornstars:
-        print(star.name)
-
-
-import asyncio
-asyncio.run(main())
