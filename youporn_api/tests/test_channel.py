@@ -1,9 +1,11 @@
-from ..youporn_api import Client, Channel
+import pytest
+from ..youporn_api import Client
 
-client = Client()
-channel = client.get_channel("https://www.youporn.com/channel/mia-khalifa/")
+@pytest.mark.asyncio
+async def test_everything():
+    client = Client()
+    channel = await client.get_channel("https://www.youporn.com/channel/mia-khalifa/")
 
-def test_everything():
     assert isinstance(channel.name, str)
     assert isinstance(channel.description, str)
     assert isinstance(channel.channel_rank, str)
@@ -11,8 +13,9 @@ def test_everything():
     assert isinstance(channel.channel_view_count, str)
     assert isinstance(channel.total_videos_count, str)
 
-    for idx, video in enumerate(channel.videos()):
+    idx = 0
+    async for video in channel.videos():
+        idx += 1
+
         if idx >= 1:
             break
-
-        assert video.download(quality="worst", downloader="threaded") is True

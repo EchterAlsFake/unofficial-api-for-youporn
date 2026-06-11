@@ -40,11 +40,11 @@ def extractor_html(content: str):
     soup = BeautifulSoup(content, parser)
     try:
         main_container = soup.find("div", class_="full-row-thumbs")
-        videos_container = main_container.find_all("div", class_="video-box pc js_video-box js-pop")
+        videos_container = main_container.find_all("article", class_="video-box pc js_video-box js-pop")
 
     except AttributeError:
         main_container = soup.find("div", class_="three-thumbs-row")
-        videos_container = main_container.find_all("div", class_="video-box pc js_video-box js-pop")
+        videos_container = main_container.find_all("article", class_="video-box pc js_video-box js-pop")
 
     # Fetch content from HTML, if page = 0, to reduce one network request
     for video_object in videos_container:

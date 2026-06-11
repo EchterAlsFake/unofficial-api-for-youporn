@@ -14,18 +14,32 @@
 > By using this project you agree to comply with the target site’s rules, copyright/licensing requirements,
 > and applicable laws. Do not use it to bypass access controls or scrape at disruptive rates.
 
+> [!NOTE]
+> Downloading currently doesn't work, but watching videos on YouPorn also doesn't (at least for me) so I don't know
+> if this is yourporn's or my fault :(
+
 # Features
 - Fetch videos + metadata
 - Download videos
 - Fetch Channels
 - Fetch Pornstars
 - Search for videos
-- Fetch Collections
+- Fetch collections
+- Asynchronous
 - Built-in caching
 - Easy interface
 - Great type hinting
-- Proxy support
-- Very customizable
+
+#### Networking Features
+- HTTP 2.0 / HTTP 3.0
+- Browser impersonation
+- Custom JA3
+- All proxy types
+- Proxy authentication
+- Speed Limit
+- DNS over HTTPS
+- And even more...
+- All of this is configurable and can be adjusted as you like!
 
 # Supported Platforms
 This API has been tested and confirmed working on:
@@ -42,20 +56,23 @@ This API has been tested and confirmed working on:
 
 
 ```python
+import asyncio
 from youporn_api import Client
-# Initialize a Client object
-client = Client()
 
-# Fetch a video
-video_object = client.get_video("<insert_url_here>")
-
-# Information from Video objects
-print(video_object.title)
-print(video_object.rating)
-# Download the video
-
-video_object.download(downloader="threaded", quality="best", path="your_output_path + filename")
-
+async def main():
+    # Initialize a Client object
+    client = Client()
+    
+    # Fetch a video
+    video_object = await client.get_video("<insert_url_here>")
+    
+    # Information from Video objects
+    print(video_object.title)
+    print(video_object.rating)
+    # Download the video
+    
+    await video_object.download(downloader="threaded", quality="best", path="your_output_path + filename")
+asyncio.run(main())
 # SEE DOCUMENTATION FOR MORE
 ```
 

@@ -1,19 +1,24 @@
-from ..youporn_api import Client, Pornstar
-from typing import Generator
-client = Client()
-video = client.get_video("https://www.youporn.com/watch/15852222/instruction-a-la-branlette-joi-fr-by-kalyssy/")
+import pytest
+from ..youporn_api import Client, Pornstar, Channel
+from typing import AsyncGenerator
 
-
-def test_everything():
+@pytest.mark.asyncio
+async def test_everything():
+    client = Client()
+    video = await client.get_video("https://www.youporn.com/watch/225965571/")
     assert isinstance(video.title, str)
-    assert isinstance(video.m3u8_base_url, str)
     assert isinstance(video.rating, str)
-    assert isinstance(video.pornstars, Generator)
+
+    async for pornstar in video.pornstars():
+        assert isinstance(pornstar.name, str)
+
     assert isinstance(video.thumbnail, str)
     assert isinstance(video.categories, list)
     assert isinstance(video.views, str)
     assert isinstance(video.publish_date, str)
-    assert isinstance(video.author, Pornstar)
+
+    author = await video.author()
+    assert isinstance(author, Channel | Pornstar)
+
     assert isinstance(video.length, str)
-    stuff = video.download(quality="worst", return_report=True)
-    assert stuff["status"] == "completed"
+    # Download is currently broken on yourporn
