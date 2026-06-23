@@ -9,7 +9,7 @@ from curl_cffi import Response, AsyncSession
 from base_api.modules.type_hints import DownloadReport
 from base_api.base import BaseCore, setup_logger, Helper
 from typing import List, AsyncGenerator, Generator, Literal, Dict, Tuple, cast
-from base_api.modules.errors import InvalidProxy, BotProtectionDetected, UnknownError, NetworkingError
+from base_api.modules.errors import InvalidProxy, BotProtectionDetected, UnknownError, NetworkingError, ResourceGone
 
 try:
     from .modules.consts import *
@@ -97,6 +97,15 @@ def pick_best_mp4(variants: List[Dict]) -> str | None:
     return items[0]["videoUrl"]
 
 
+async def on_error(url: str, error: Exception, attempt: int) -> bool:
+    print(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
+
+    if isinstance(error, ResourceGone):
+        return False
+
+    return True
+
+
 async def get_html_content(core: BaseCore, url: str) -> str | None | dict:
     # What should I do here?
     try:
@@ -172,13 +181,16 @@ class Channel(Helper):
     def description(self) -> str:
         return self.soup.find("div", class_="profile-bio channel-description").text.strip()
 
-    async def videos(self, pages: int = 2, videos_concurrency: int | None = None, pages_concurrency: int | None = None) -> AsyncGenerator[Video, None]:
+    async def videos(self, pages: int = 2, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
+                     on_video_error: on_error_hint = on_error,
+                     on_page_error: on_error_hint = None
+                     ) -> AsyncGenerator[Video, None]:
         page_urls = [f"{self.url}?page={page}" for page in range(1, pages + 1)]
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
         async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency, max_page_concurrency=pages_concurrency,
-                                 video_link_extractor=extractor_html):
+                                 video_link_extractor=extractor_html, on_video_error=on_video_error, on_page_error=on_page_error):
             yield video
 
 
@@ -225,14 +237,18 @@ class Collection(Helper):
     def last_updated(self) -> str:
         return self.soup.find("li", class_="lastUpdated").find("p").text.strip()
 
-    async def videos(self, pages: int = 2, videos_concurrency: int | None = None, pages_concurrency: int | None = None) -> AsyncGenerator[Video, None]:
+    async def videos(self, pages: int = 2, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
+                     on_video_error: on_error_hint = on_error,
+                     on_page_error: on_error_hint = None
+                     ) -> AsyncGenerator[Video, None]:
         page_urls = [f"{self.url}?page={page}" for page in range(1, pages + 1)]
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
         async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
                                  max_page_concurrency=pages_concurrency,
-                                 video_link_extractor=extractor_html):
+                                 video_link_extractor=extractor_html,
+                                 on_video_error=on_video_error, on_page_error=on_page_error):
             yield video
 
 
@@ -278,14 +294,18 @@ class Pornstar(Helper):
 
         return dictionary
 
-    async def videos(self, pages: int = 2, videos_concurrency: int | None = None, pages_concurrency: int | None = None) -> AsyncGenerator[Video, None]:
+    async def videos(self, pages: int = 2, videos_concurrency: int | None = None, pages_concurrency: int | None = None,
+                     on_video_error: on_error_hint = on_error,
+                     on_page_error: on_error_hint = None
+                     ) -> AsyncGenerator[Video, None]:
         page_urls = [f"{self.url}?page={page}" for page in range(1, pages + 1)]
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
         assert videos_concurrency and pages_concurrency
         async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency,
                                  max_page_concurrency=pages_concurrency,
-                                 video_link_extractor=extractor_html):
+                                 video_link_extractor=extractor_html,
+                                 on_video_error=on_video_error, on_page_error=on_page_error):
             yield video
 
 class User:
@@ -461,7 +481,7 @@ class Video:
             path = os.path.join(path, f"{self.title}.mp4")
 
         # Ensure m3u8_base_url has been resolved so _direct_mp4_url is populated if needed
-        m3u8 = await self.m3u8_base_url()
+        await self.m3u8_base_url()
 
         if self._direct_mp4_url:
             # Direct MP4 stream – use legacy (non-HLS) download
@@ -522,6 +542,8 @@ class Client(Helper):
                       ] | None = None,
                       videos_concurrency: int | None = None,
                       pages_concurrency: int | None = None,
+                      on_video_error: on_error_hint = on_error,
+                      on_page_error: on_error_hint = None
                       ) -> AsyncGenerator[Video, None]:
         # Define basic filters
         res = ""
@@ -547,5 +569,6 @@ class Client(Helper):
         assert videos_concurrency and pages_concurrency
         page_urls = [f"https://youporn.com{filter}{query}{res}{min_minutes}{max_minutes}&page={page}" for page in range(1, pages + 1)]
         async for video in self.iterator(target_page_urls=page_urls, max_video_concurrency=videos_concurrency, max_page_concurrency=pages_concurrency,
-                                 video_link_extractor=extractor_html):
+                                 video_link_extractor=extractor_html,
+                                         on_video_error=on_video_error, on_page_error=on_page_error):
             yield video.init()
