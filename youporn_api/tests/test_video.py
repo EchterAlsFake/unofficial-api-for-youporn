@@ -1,5 +1,7 @@
 import pytest
-from ..youporn_api import Client, Pornstar, Channel
+from base_api import DownloadConfigHLS
+
+from ..api import Client, Pornstar, Channel
 from typing import AsyncGenerator
 
 @pytest.mark.asyncio
@@ -9,7 +11,7 @@ async def test_everything():
     assert isinstance(video.title, str)
     assert isinstance(video.rating, str)
 
-    async for pornstar in video.pornstars():
+    async for pornstar in video.pornstars:
         assert isinstance(pornstar.name, str)
 
     assert isinstance(video.thumbnail, str)
@@ -21,4 +23,7 @@ async def test_everything():
     assert isinstance(author, Channel | Pornstar)
 
     assert isinstance(video.length, str)
-    # Download is currently broken on yourporn
+
+    config = DownloadConfigHLS(quality="best", path="./", return_report=True, remux=True)
+    report = await video.download(configuration=config)
+    assert report.status == "completed"

@@ -1,5 +1,5 @@
 import pytest
-from ..youporn_api import Client
+from ..api import Client
 
 @pytest.mark.asyncio
 async def test_everything():
@@ -14,8 +14,9 @@ async def test_everything():
     assert isinstance(channel.total_videos_count, str)
 
     idx = 0
-    async for video in channel.videos():
+    async for result in channel.videos():
         idx += 1
+        assert isinstance(result.video.title, str)
 
-        if idx >= 1:
+        if idx >= 3:
             break

@@ -3,9 +3,9 @@ requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
 
 [project]
-name = "youporn_api"
-version = "1.5.2"
-description = "A Python API for the Porn Site youporn.com"
+name = "unofficial-api-for-youporn"
+version = "1.6"
+description = "An asynchronous high-speed modern Python API for youporn.com: search, videos, channels, pornstars, downloading (selectolax + curl-cffi)"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
 license = "LGPL-3.0-only"
@@ -15,19 +15,22 @@ authors = [
 ]
 dependencies = [
     "bs4",
-    "eaf_base_api",
+    "eaf-base-api",
     "m3u8",
+    "selectolax"
 ]
 classifiers = [
-    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Intended Audience :: Developers",
+    "Development Status :: 5 - Production/Stable"
 ]
 
 [project.optional-dependencies]
 av = ["av; python_version >= '3.10'"]
-full = ["lxml"] # H2 fLXML for faster parsing speed, though optional :)
 
 [project.urls]
-Homepage = "https://github.com/EchterAlsFake/youporn_api"
+Homepage = "https://github.com/EchterAlsFake/unofficial-api-for-youporn"
 
 [tool.setuptools]
 packages = { find = {} }
@@ -35,3 +38,6 @@ packages = { find = {} }
 [tool.uv.build-backend]
 module-name = "youporn_api"
 module-root = ""
+
+[tool.uv.sources]
+eaf-base-api = { path = "../eaf_base_api", editable = true }
