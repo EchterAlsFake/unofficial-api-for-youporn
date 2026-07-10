@@ -13,6 +13,16 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Johannes Habel", email = "EchterAlsFake@proton.me" }
 ]
+keywords = [
+    "api",
+    "scraper",
+    "async",
+    "asyncio",
+    "video-downloader",
+    "selectolax",
+    "curl-cffi",
+    "youporn"
+]
 dependencies = [
     "bs4",
     "eaf-base-api",
@@ -20,17 +30,24 @@ dependencies = [
     "selectolax"
 ]
 classifiers = [
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "Development Status :: 5 - Production/Stable"
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Multimedia :: Video"
 ]
 
 [project.optional-dependencies]
-av = ["av; python_version >= '3.10'"]
+av = ["av"]
 
 [project.urls]
 Homepage = "https://github.com/EchterAlsFake/unofficial-api-for-youporn"
+Repository = "https://github.com/EchterAlsFake/unofficial-api-for-youporn"
+"Bug Tracker" = "https://github.com/EchterAlsFake/unofficial-api-for-youporn/issues"
 
 [tool.setuptools]
 packages = { find = {} }
@@ -38,6 +55,3 @@ packages = { find = {} }
 [tool.uv.build-backend]
 module-name = "youporn_api"
 module-root = ""
-
-[tool.uv.sources]
-eaf-base-api = { path = "../eaf_base_api", editable = true }
