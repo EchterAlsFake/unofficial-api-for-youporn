@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import os
 import re
+import copy
 import json
 import asyncio
 import logging
 
-from dataclasses import dataclass
-
+from dataclasses import dataclass, fields
 from curl_cffi import Response, AsyncSession
 from selectolax.lexbor import LexborHTMLParser
-from base_api.modules.type_hints import DownloadReport
 from typing import  AsyncGenerator, Literal, cast
+from base_api.modules.type_hints import DownloadReport
 from base_api import BaseCore, Helper, DownloadConfigHLS, DownloadConfigRAW, ScrapeResult, BaseMedia
 from base_api.modules.errors import InvalidProxy, BotProtectionDetected, UnknownError, NetworkRequestError, ResourceGone
 
@@ -27,7 +27,7 @@ logger.addHandler(logging.NullHandler())
 
 
 async def on_error(url: str, error: Exception, attempt: int) -> bool:
-    logger.warning(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
+    logger.error(f"URL: {url}, ERROR: {error}, Attempt: {attempt}")
 
     if isinstance(error, ResourceGone):
         return False
@@ -85,13 +85,10 @@ class Channel(BaseMedia):
         logger.debug(f"Received HTML Content for: {self.url}")
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
-        self.name = data.get("name")
-        self.channel_rank = data.get("channel_rank")
-        self.total_videos_count = data.get("total_videos_count")
-        self.channel_view_count = data.get("channel_view_count")
-        self.channel_subscribers_count = data.get("channel_subscribers_count")
-        self.description = data.get("description")
-        logger.debug(f"Finished extracting attributes for Channel: {self.name}")
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data:
+            if key in allowed_fields:
+                setattr(self, key, value)
 
     @staticmethod
     def _extract_data(html_content: str) -> dict:
@@ -119,8 +116,8 @@ class Channel(BaseMedia):
                      keep_original_order: bool = False
                      ) -> AsyncGenerator[ScrapeResult, None]:
         helper = Helper(core=self.core, constructor=Video)
-
-        page_urls = [f"{self.url}?page={page}" for page in range(1, pages + 1)]
+        url = self.url
+        page_urls = [f"{url}?page={page}" for page in range(1, pages + 1)]
         logger.info(f"Requesting channel videos from urls: {page_urls}")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
@@ -150,12 +147,11 @@ class Collection(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
         data = await asyncio.to_thread(self._extract_data, html_content)
-        self.name = data.get("name")
-        self.rating = data.get("rating")
-        self.total_videos_count = data.get("total_videos_count")
-        self.view_count = data.get("view_count")
-        self.last_updated = data.get("last_updated")
-        logger.debug(f"Finished extracting attributes for Collection: {self.name}")
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data:
+            if key in allowed_fields:
+                setattr(self, key, value)
+        logger.debug(f"Finished extracting attributes for Collection")
 
     @staticmethod
     def _extract_data(html_content: str) -> dict:
@@ -181,7 +177,8 @@ class Collection(BaseMedia):
                      ) -> AsyncGenerator[ScrapeResult, None]:
 
         helper = Helper(core=self.core, constructor=Video)
-        page_urls = [f"{self.url}?page={page}" for page in range(1, pages + 1)]
+        url = self.url
+        page_urls = [f"{url}?page={page}" for page in range(1, pages + 1)]
         logger.info(f"Requesting collection videos from urls: {page_urls}")
         videos_concurrency = videos_concurrency or self.core.configuration.videos_concurrency
         pages_concurrency = pages_concurrency or self.core.configuration.pages_concurrency
@@ -197,7 +194,7 @@ class Pornstar(BaseMedia):
     url: str
     core: BaseCore
     name: str | None = None
-    pornstar_profile_info: dict | None = None
+    profile_info: dict | None = None
 
     async def _perform_load(self, api: bool, html: bool, anything_else: bool):
         if html:
@@ -208,10 +205,12 @@ class Pornstar(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
-        self.name = data.get("name")
-        self.pornstar_profile_info = data.get("profile_info")
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data:
+            if key in allowed_fields:
+                setattr(self, key, value)
+                # Yes I know this is inefficient, but if we scale later, then I don't have to rewrite it lol
         logger.debug(f"Finished extracting attributes for Pornstar: {self.name}")
-
 
     def _extract_data(self, html_content: str) -> dict:
         parser = LexborHTMLParser(html_content)
@@ -268,8 +267,11 @@ class User(BaseMedia):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
         data = asyncio.to_thread(self._extract_data, html_content)
-        self.name = data.get("name")
-        self.collection_urls = data.get("collection_urls")
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data:
+            if key in allowed_fields:
+                setattr(self, key, value)
+
         logger.debug(f"Finished extracting attributes for User: {self.name}")
 
     @staticmethod
@@ -298,7 +300,6 @@ class User(BaseMedia):
 
 @dataclass(slots=True, kw_only=True)
 class Video(BaseMedia):
-
     url: str
     core: BaseCore
     title: str | None = None
@@ -352,15 +353,11 @@ class Video(BaseMedia):
             logger.debug(f"Video {self.url} is using raw MP4 stream")
 
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
-        self.title = data.get("title")
-        self.length = data.get("length")
-        self.rating = data.get("rating")
-        self.views = data.get("views")
-        self.publish_date = data.get("publish_date")
-        self.author_link = data.get("author_link")
-        self.thumbnail = data.get("thumbnail")
-        self.categories = data.get("categories")
-        self.pornstars_urls = data.get("pornstars_urls")
+        allowed_fields = {field.name for field in fields(self)}
+        for key, value in data:
+            if key in allowed_fields:
+                setattr(self, key, value)
+
         logger.debug(f"Finished extracting attributes for Video: {self.title}")
 
 
@@ -425,17 +422,19 @@ class Video(BaseMedia):
         :param backup_configuration:
         :return:
         """
+        config = copy.deepcopy(configuration)
+        config_backup = copy.deepcopy(backup_configuration)
         logger.info(f"Starting download for video: {self.title or self.url}")
-        if not configuration.no_title:
-            configuration.path = os.path.join(configuration.path, f"{self.title}.mp4")
+        if not config.no_title:
+            config.path = os.path.join(config.path, f"{self.title}.mp4")
 
-            if backup_configuration:
-                backup_configuration.path = os.path.join(backup_configuration.path, f"{self.title}.mp4")
+            if config_backup:
+                config_backup.path = os.path.join(config_backup.path, f"{self.title}.mp4")
 
-        configuration.m3u8_base_url = self.m3u8_base_url
+        config.m3u8_base_url = self.m3u8_base_url
 
         if not self.is_hls:
-            assert isinstance(backup_configuration, DownloadConfigRAW), """
+            assert isinstance(config_backup, DownloadConfigRAW), """
             The video you choose to download does not have an HLS stream. I tried falling back to raw video
             downloading over direct download links, but you did not provide a configuration for this case.
 
@@ -444,14 +443,14 @@ class Video(BaseMedia):
             """
             try:
                 logger.info(f"Falling back to legacy download for video: {self.title or self.url}")
-                return await self.core.legacy_download(configuration=backup_configuration, url=self.m3u8_base_url)
+                return await self.core.legacy_download(configuration=config_backup, url=self.m3u8_base_url)
 
             except Exception as e:
                 logger.error(f"Legacy download failed for video {self.title or self.url}: {e}")
                 raise DownloadFailed(str(e))
 
         try:
-            return await self.core.download(configuration=configuration)
+            return await self.core.download(configuration=config)
         except Exception as e:
             logger.error(f"Download failed for video {self.title or self.url}: {e}")
             raise DownloadFailed(str(e))

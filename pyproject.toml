@@ -27,7 +27,7 @@ dependencies = [
     "bs4",
     "eaf-base-api",
     "m3u8",
-    "selectolax"
+    "selectolax",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
