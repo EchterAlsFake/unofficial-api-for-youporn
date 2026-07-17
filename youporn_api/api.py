@@ -86,7 +86,7 @@ class Channel(BaseMedia):
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
         allowed_fields = {field.name for field in fields(self)}
-        for key, value in data:
+        for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
 
@@ -146,9 +146,9 @@ class Collection(BaseMedia):
     async def _fetch_html(self):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
-        data = await asyncio.to_thread(self._extract_data, html_content)
+        data: dict = await asyncio.to_thread(self._extract_data, html_content)
         allowed_fields = {field.name for field in fields(self)}
-        for key, value in data:
+        for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
         logger.debug(f"Finished extracting attributes for Collection")
@@ -206,7 +206,7 @@ class Pornstar(BaseMedia):
         assert isinstance(html_content, str)
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
         allowed_fields = {field.name for field in fields(self)}
-        for key, value in data:
+        for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
                 # Yes I know this is inefficient, but if we scale later, then I don't have to rewrite it lol
@@ -266,9 +266,9 @@ class User(BaseMedia):
     async def _fetch_html(self):
         html_content = await get_html_content(core=self.core, url=self.url)
         assert isinstance(html_content, str)
-        data = asyncio.to_thread(self._extract_data, html_content)
+        data: dict = asyncio.to_thread(self._extract_data, html_content)
         allowed_fields = {field.name for field in fields(self)}
-        for key, value in data:
+        for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
 
@@ -354,7 +354,7 @@ class Video(BaseMedia):
 
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
         allowed_fields = {field.name for field in fields(self)}
-        for key, value in data:
+        for key, value in data.items():
             if key in allowed_fields:
                 setattr(self, key, value)
 

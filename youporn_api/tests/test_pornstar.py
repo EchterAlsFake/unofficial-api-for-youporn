@@ -17,4 +17,4 @@ async def test_all():
             break
 
     assert isinstance(pornstar_real.name, str)
-    assert isinstance(pornstar_real.pornstar_profile_info, dict)
+    assert isinstance(pornstar_real.profile_info, dict)

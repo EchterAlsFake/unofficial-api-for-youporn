@@ -24,6 +24,6 @@ async def test_everything():
 
     assert isinstance(video.length, str)
 
-    config = DownloadConfigHLS(quality="best", path="./", return_report=True, remux=True)
+    config = DownloadConfigHLS(quality="worst", path="./", return_report=True, remux=True)
     report = await video.download(configuration=config)
     assert report.status == "completed"
