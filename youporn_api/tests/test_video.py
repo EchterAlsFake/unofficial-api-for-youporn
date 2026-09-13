@@ -16,6 +16,7 @@ async def test_everything():
 
     assert isinstance(video.thumbnail, str)
     assert isinstance(video.categories, list)
+    assert isinstance(video.tags, list)
     assert isinstance(video.views, str)
     assert isinstance(video.publish_date, str)
 

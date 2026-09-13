@@ -7,6 +7,7 @@ import json
 import asyncio
 import logging
 import argparse
+from urllib.parse import unquote
 
 from base_api.modules.logger import configure_app_logging
 
@@ -93,52 +94,99 @@ async def get_html_content(core: BaseCore, url: str) -> str:
 
 
 @dataclass(slots=True, kw_only=True)
-class Channel(BaseMedia):
+class BaseProfile(BaseMedia):
     url: str
     core: BaseCore
     name: str | None = media_field("html")
-    channel_rank: str | None = media_field("html")
-    total_videos_count: str | None = media_field("html")
-    channel_view_count: str | None = media_field("html")
-    channel_subscribers_count: str | None = media_field("html")
+    avatar: str | None = media_field("html")
+    banner: str | None = media_field("html")
     description: str | None = media_field("html")
 
     loader_methods: ClassVar[dict[str, str]] = {"html": "_load_html"}
 
     async def _load_html(self) -> dict[str, object]:
-        logger.info(f"Loading Channel HTML from {self.url}")
+        logger.info(f"Loading {self.__class__.__name__} HTML from {self.url}")
         html_content = await get_html_content(core=self.core, url=self.url)
         logger.debug(f"Received HTML Content for: {self.url}")
         return await asyncio.to_thread(self._extract_data, html_content)
 
-    @staticmethod
-    def _extract_data(html_content: str) -> dict:
-        parser = LexborHTMLParser(html_content)
-        name = parser.css_first("h1.name-title").text().replace("Subscribe", "").strip()
-        channel_info_box = parser.css_first("div.main-stats-bar")
-        channel_rank = channel_info_box.css_first("p.info-stat-data").text(strip=True)
-        total_videos_count = channel_info_box.css("p.info-stat-data")[3].text(strip=True)
-        channel_view_count = channel_info_box.css("p.info-stat-data")[1].text(strip=True)
-        channel_subscribers_count = channel_info_box.css("p.info-stat-data")[2].text()
-        description = parser.css_first("div.profile-bio.channel-description").text(strip=True)
+    def _extract_common_header(self, parser: LexborHTMLParser) -> dict:
+        entity_name = self.__class__.__name__.lower()
+        name_node = parser.css_first("h1.name-title") or parser.css_first("h1")
+        if name_node:
+            name = name_node.text(strip=True).replace("Subscribe", "").strip()
+        elif btn := parser.css_first("button.js_subscribe_btn[data-entityname]"):
+            name = btn.attributes.get("data-entityname")
+        else:
+            logger.error("Failed to extract name from %s page: %s", entity_name, self.url)
+            name = None
+
+        avatar_img = (
+            parser.css_first("div.header-banner-wrapper div.avatar-wrapper img")
+            or parser.css_first("div.header-banner-wrapper div.logo-wrapper img")
+            or parser.css_first("img.userAvatar")
+        )
+        avatar = (avatar_img.attributes.get("data-src") or avatar_img.attributes.get("src")) if avatar_img else None
+        if not avatar:
+            logger.error("Failed to extract avatar from %s page: %s", entity_name, self.url)
+
+        banner_img = parser.css_first("div.header-banner-wrapper div.banner-wrapper img")
+        banner = (banner_img.attributes.get("data-src") or banner_img.attributes.get("src")) if banner_img else None
+        if not banner:
+            logger.error("Failed to extract banner from %s page: %s", entity_name, self.url)
+
+        desc_node = parser.css_first("div.profile-bio.channel-description") or parser.css_first("div.profile-bio")
+        description = desc_node.text(strip=True) if desc_node else None
+        if not description:
+            logger.error("Failed to extract description from %s page: %s", entity_name, self.url)
 
         return {
             "name": name,
-            "channel_rank": channel_rank,
-            "total_videos_count": total_videos_count,
-            "channel_view_count": channel_view_count,
-            "channel_subscribers_count": channel_subscribers_count,
-            "description": description
+            "avatar": avatar,
+            "banner": banner,
+            "description": description,
         }
+
+    def _extract_stats_bar(self, parser: LexborHTMLParser) -> dict[str, str]:
+        stats = {}
+        info_box = parser.css_first("div.main-stats-bar")
+        if info_box:
+            for stat in info_box.css("li.info-stat"):
+                label_node = stat.css_first("p.info-stat-label")
+                data_node = stat.css_first("p.info-stat-data")
+                if label_node and data_node:
+                    label = label_node.text(strip=True).lower()
+                    val = data_node.text(strip=True)
+                    if "rank" in label:
+                        stats["rank"] = val
+                    elif "view" in label:
+                        stats["views"] = val
+                    elif "subscriber" in label:
+                        stats["subscribers"] = val
+                    elif "video" in label:
+                        stats["videos"] = val
+
+            data_elements = info_box.css("p.info-stat-data")
+            if "rank" not in stats and len(data_elements) > 0:
+                stats["rank"] = data_elements[0].text(strip=True)
+            if "views" not in stats and len(data_elements) > 1:
+                stats["views"] = data_elements[1].text(strip=True)
+            if "subscribers" not in stats and len(data_elements) > 2:
+                stats["subscribers"] = data_elements[2].text(strip=True)
+            if "videos" not in stats and len(data_elements) > 3:
+                stats["videos"] = data_elements[3].text(strip=True)
+        else:
+            logger.error("Failed to find main-stats-bar on %s page: %s", self.__class__.__name__.lower(), self.url)
+        return stats
 
     def videos(
         self,
         pages: int = 2,
         iterator_config: IteratorConfig | None = None,
     ) -> AsyncGenerator[ScrapeResult[Video], None]:
-        url = self.url
-        page_urls = [f"{url}?page={page}" for page in range(1, pages + 1)]
-        logger.info(f"Requesting channel videos from urls: {page_urls}")
+        base_url = self.url.rstrip("/")
+        page_urls = [f"{base_url}/?page={page}" for page in range(1, pages + 1)]
+        logger.info(f"Requesting {self.__class__.__name__.lower()} videos from urls: {page_urls}")
         if iterator_config is None:
             iterator_config = make_iterator_config()
 
@@ -149,6 +197,74 @@ class Channel(BaseMedia):
             item_extractor=extractor_html,
             iterator_config=iterator_config,
         )
+
+
+@dataclass(slots=True, kw_only=True)
+class Channel(BaseProfile):
+    channel_rank: str | None = media_field("html")
+    total_videos_count: str | None = media_field("html")
+    channel_view_count: str | None = media_field("html")
+    channel_subscribers_count: str | None = media_field("html")
+    channel_id: str | None = media_field("html")
+    join_url: str | None = media_field("html")
+
+    @property
+    def rank(self) -> str | None:
+        return self.channel_rank
+
+    @property
+    def view_count(self) -> str | None:
+        return self.channel_view_count
+
+    @property
+    def subscribers_count(self) -> str | None:
+        return self.channel_subscribers_count
+
+    @property
+    def entity_id(self) -> str | None:
+        return self.channel_id
+
+    def _extract_data(self, html_content: str) -> dict:
+        parser = LexborHTMLParser(html_content)
+        common = self._extract_common_header(parser)
+        stats = self._extract_stats_bar(parser)
+
+        channel_rank = stats.get("rank")
+        channel_view_count = stats.get("views")
+        channel_subscribers_count = stats.get("subscribers")
+        total_videos_count = stats.get("videos")
+
+        if not channel_rank:
+            logger.error("Failed to extract channel_rank from channel page: %s", self.url)
+        if not channel_view_count:
+            logger.error("Failed to extract channel_view_count from channel page: %s", self.url)
+        if not channel_subscribers_count:
+            logger.error("Failed to extract channel_subscribers_count from channel page: %s", self.url)
+        if not total_videos_count:
+            logger.error("Failed to extract total_videos_count from channel page: %s", self.url)
+
+        btn = parser.css_first("button.js_subscribe_btn")
+        channel_id = btn.attributes.get("data-entityid") if btn else None
+        if not channel_id:
+            if modal := parser.css_first("v-channel-flag-modal[item-id]"):
+                channel_id = modal.attributes.get("item-id")
+        if not channel_id:
+            logger.error("Failed to extract channel_id from channel page: %s", self.url)
+
+        join_btn = parser.css_first("button.join-us a.join-wrapper") or parser.css_first("a.join-wrapper")
+        join_url = join_btn.attributes.get("href") if join_btn else None
+        if not join_url:
+            logger.error("Failed to extract join_url from channel page: %s", self.url)
+
+        return {
+            **common,
+            "channel_rank": channel_rank,
+            "total_videos_count": total_videos_count,
+            "channel_view_count": channel_view_count,
+            "channel_subscribers_count": channel_subscribers_count,
+            "channel_id": channel_id,
+            "join_url": join_url,
+        }
 
 
 @dataclass(slots=True, kw_only=True)
@@ -208,56 +324,97 @@ class Collection(BaseMedia):
         )
 
 @dataclass(slots=True, kw_only=True)
-class Pornstar(BaseMedia):
-    url: str
-    core: BaseCore
-    name: str | None = media_field("html")
+class Pornstar(BaseProfile):
     profile_info: dict | None = media_field("html")
+    pornstar_id: str | None = media_field("html")
+    pornstar_rank: str | None = media_field("html")
+    subscribers_count: str | None = media_field("html")
+    view_count: str | None = media_field("html")
+    official_site: str | None = media_field("html")
+    more_of_me: str | None = media_field("html")
+    featured_in: list[str] | None = media_field("html")
 
-    loader_methods: ClassVar[dict[str, str]] = {"html": "_load_html"}
+    @property
+    def rank(self) -> str | None:
+        return self.pornstar_rank
 
-    async def _load_html(self) -> dict[str, object]:
-        logger.info(f"Loading Pornstar HTML from {self.url}")
-        html_content = await get_html_content(core=self.core, url=self.url)
-        return await asyncio.to_thread(self._extract_data, html_content)
+    @property
+    def pornstar_subscribers_count(self) -> str | None:
+        return self.subscribers_count
+
+    @property
+    def pornstar_view_count(self) -> str | None:
+        return self.view_count
+
+    @property
+    def entity_id(self) -> str | None:
+        return self.pornstar_id
 
     def _extract_data(self, html_content: str) -> dict:
         parser = LexborHTMLParser(html_content)
-        name = parser.css_first("h1.name-title").text(strip=True)
-        dictionary = {}
+        common = self._extract_common_header(parser)
+        stats = self._extract_stats_bar(parser)
 
-        if not "/amateur/" in self.url:
-            profile_info = parser.css_first("ul.profile-info")
-            li_tags = profile_info.css("li.info-stat")
+        pornstar_rank = stats.get("rank")
+        if not pornstar_rank:
+            logger.error("Failed to extract pornstar_rank from pornstar page: %s", self.url)
 
-            for tag in li_tags:
-                stuff = tag.css("p")
-                key = stuff[0].text(strip=True)
-                item = stuff[1].text(strip=True)
-                dictionary.update({key: item})
+        view_count = stats.get("views")
+        if not view_count:
+            logger.error("Failed to extract view_count from pornstar page: %s", self.url)
+
+        subscribers_count = stats.get("subscribers")
+        if not subscribers_count:
+            logger.error("Failed to extract subscribers_count from pornstar page: %s", self.url)
+
+        btn = parser.css_first("button.js_subscribe_btn")
+        pornstar_id = btn.attributes.get("data-entityid") if btn else None
+        if not pornstar_id:
+            if match := re.search(r"button_pornstar_(\d+)", html_content):
+                pornstar_id = match.group(1)
+        if not pornstar_id:
+            logger.error("Failed to extract pornstar_id from pornstar page: %s", self.url)
+
+        official_site_node = parser.css_first("div.main-stats-bar a.social-link") or parser.css_first("a.social-link")
+        official_site = official_site_node.attributes.get("href") if official_site_node else None
+
+        more_node = parser.css_first("div.profile-more-of-me a")
+        more_of_me = None
+        if more_node and (href := more_node.attributes.get("href")):
+            if href.startswith("/redirect/"):
+                more_of_me = unquote(href.removeprefix("/redirect/"))
+            else:
+                more_of_me = href
+
+        featured_in = list(dict.fromkeys(
+            a.text(strip=True)
+            for a in parser.css("div.known-for-wrapper a")
+            if a.text(strip=True)
+        ))
+
+        profile_info = {}
+        if ul_profile := parser.css_first("ul.profile-info"):
+            for tag in ul_profile.css("li.info-stat"):
+                label_node = tag.css_first("p.info-stat-label")
+                data_node = tag.css_first("p.info-stat-data")
+                if label_node and data_node:
+                    profile_info[label_node.text(strip=True)] = data_node.text(strip=True)
+                else:
+                    stuff = tag.css("p")
+                    if len(stuff) >= 2:
+                        profile_info[stuff[0].text(strip=True)] = stuff[1].text(strip=True)
 
         return {
-            "name": name,
-            "profile_info": dictionary
+            **common,
+            "profile_info": profile_info,
+            "pornstar_id": pornstar_id,
+            "pornstar_rank": pornstar_rank,
+            "subscribers_count": subscribers_count,
+            "view_count": view_count,
+            "official_site": official_site,
+            "more_of_me": more_of_me,
+            "featured_in": featured_in,
         }
-
-    def videos(
-        self,
-        pages: int = 2,
-        iterator_config: IteratorConfig | None = None,
-    ) -> AsyncGenerator[ScrapeResult[Video], None]:
-        page_urls = [f"{self.url}?page={page}" for page in range(1, pages + 1)]
-        logger.info(f"Requesting pornstar videos from urls: {page_urls}")
-        if iterator_config is None:
-            iterator_config = make_iterator_config()
-
-        return scrape_stream(
-            core=self.core,
-            constructor=Video,
-            target_page_urls=page_urls,
-            item_extractor=extractor_html,
-            iterator_config=iterator_config,
-        )
 
 
 @dataclass(kw_only=True, slots=True)
@@ -312,16 +469,17 @@ class Video(BaseMedia):
     views: str | None = media_field("html")
     thumbnail: str | None = media_field("html")
     categories: list[str] | None = media_field("html")
+    tags: list[str] | None = media_field("html")
     m3u8_base_url: str | None = media_field("html")
     author_link: str | None = media_field("html")
     pornstars_urls: list[str] | None = media_field("html")
 
-    # Only when comming from the iterator, if they are None, it is how it is...
-    uploader_id: str | None = None
+    # Available from HTML or iterator
+    uploader_id: str | None = media_field("html", default=None)
     uploader_status: str | None = None
-    uploader_type: str | None = None
-    uploader_name: str | None = None
-    video_id: str | None = None
+    uploader_type: str | None = media_field("html", default=None)
+    uploader_name: str | None = media_field("html", default=None)
+    video_id: str | None = media_field("html", default=None)
 
     # You don't need this
     is_hls: bool | None = media_field("html")
@@ -338,59 +496,154 @@ class Video(BaseMedia):
             raise RegionBlocked(f"The Video: {self.url} is not available in your region!")
 
         variants_url = await asyncio.to_thread(self._extract_variants_url, html_content)
-        variants_json_str = await get_html_content(core=self.core, url=variants_url)
-        variants = json.loads(variants_json_str)
+        m3u8_base_url = None
+        is_hls = None
 
-        try:
-            m3u8_base_url = build_master_playlist(variants)
-            is_hls = True
-            logger.debug(f"Video {self.url} is using HLS stream")
+        if not variants_url:
+            logger.error("Failed to extract variants URL for video %s", self.url)
+        else:
+            try:
+                variants_json_str = await get_html_content(core=self.core, url=variants_url)
+                variants = json.loads(variants_json_str)
 
-        except ValueError:
-            logger.warning("Failed to build HLS playlist for %s; trying MP4 variants from %s", self.url, variants_url, exc_info=True)
-            m3u8_base_url = pick_best_mp4(variants)
-            is_hls = False
-            logger.debug(f"Video {self.url} is using raw MP4 stream")
+                try:
+                    m3u8_base_url = build_master_playlist(variants)
+                    is_hls = True
+                    logger.debug(f"Video {self.url} is using HLS stream")
+
+                except ValueError:
+                    logger.warning("Failed to build HLS playlist for %s; trying MP4 variants from %s", self.url, variants_url, exc_info=True)
+                    m3u8_base_url = pick_best_mp4(variants)
+                    is_hls = False
+                    logger.debug(f"Video {self.url} is using raw MP4 stream")
+            except Exception as e:
+                logger.exception("Failed to load video stream variants for %s: %s", self.url, e)
 
         data: dict = await asyncio.to_thread(self._extract_data, html_content)
         data["m3u8_base_url"] = m3u8_base_url
         data["is_hls"] = is_hls
-        logger.debug(f"Finished extracting attributes for Video: {data['title']}")
+        logger.debug(f"Finished extracting attributes for Video: {data.get('title')}")
         return data
 
 
     @staticmethod
-    def _extract_variants_url(html_content: str) -> str:
+    def _extract_variants_url(html_content: str) -> str | None:
         """Runs in a background thread to prevent regex from blocking the async loop."""
-        media_definitions = re.search(r'mediaDefinition:\s*(.*?)\s*poster:', html_content,
-                                      re.DOTALL | re.IGNORECASE).group(1)
-        url = re.search(r'videoUrl":"(.*?)"', media_definitions).group(1).replace('\\', '')
-        return url
+        media_definitions_match = re.search(r'mediaDefinition:\s*(.*?)\s*poster:', html_content,
+                                            re.DOTALL | re.IGNORECASE)
+        if media_definitions_match:
+            url_match = re.search(r'videoUrl":"(.*?)"', media_definitions_match.group(1))
+            if url_match:
+                return url_match.group(1).replace('\\', '')
 
-    @staticmethod
-    def _extract_data(html_content: str) -> dict:
+        alt_match = re.search(r'"mediaDefinitions":\s*\[.*?"videoUrl":"(.*?)".*?\]', html_content, re.DOTALL)
+        if alt_match:
+            return alt_match.group(1).replace('\\', '')
+
+        return None
+
+    def _extract_data(self, html_content: str) -> dict:
         parser = LexborHTMLParser(html_content)
-        title = parser.css_first("h1.videoTitle.tm_videoTitle").text(strip=True)
-        length = re.search(r'"duration":"(.*?)"', html_content).group(1).replace("PT", "").replace("S", "").strip()
-        rating = parser.css_first("span.tm_rating_percent").text(strip=True)
-        views = parser.css_first("span.infoValue.tm_infoValue").text(strip=True)
 
-        publish_date = parser.css_first("span.publishedDate").text(strip=True)
-        author_link = f'https://youporn.com{parser.css_first("div.submitByLink > a").attributes.get("href")}'
+        title_node = parser.css_first("h1.videoTitle.tm_videoTitle") or parser.css_first("h1.videoTitle")
+        if title_node:
+            title = title_node.text(strip=True)
+        else:
+            logger.error("Failed to extract title from video page: %s", self.url)
+            title = None
 
-        thumbnail = re.search(r"poster: '(.*?)'", html_content).group(1)
-        categories_ = parser.css("a.button.bubble-button.categories-tags.tm_carousel_tag.js-pop")
-        categories = []
+        length = None
+        if match := re.search(r'"video_duration":\s*"(\d+)"', html_content):
+            length = match.group(1)
+        elif match := re.search(r'mainRoll:.*?duration:\s*[\'"](\d+)[\'"]', html_content, re.DOTALL):
+            length = match.group(1)
+        elif match := re.search(r'"duration":\s*"PT(\d+)S"', html_content):
+            length = match.group(1)
+        elif dur_node := parser.css_first("span.mgp_duration"):
+            length = dur_node.text(strip=True)
 
-        for category in categories_:
-            categories.append(category.text(strip=True))
+        if not length:
+            logger.error("Failed to extract length from video page: %s", self.url)
 
-        pornstars_ = parser.css("a.metaDataPornstarLink.tm_pornstar_link")
-        urls = []
+        rating_node = parser.css_first("span.tm_rating_percent")
+        if rating_node:
+            rating = rating_node.text(strip=True)
+        else:
+            logger.error("Failed to extract rating from video page: %s", self.url)
+            rating = None
 
-        for pornstar_object in pornstars_:
-            url = pornstar_object.attributes.get("href")
-            urls.append(url)
+        views_node = parser.css_first("span.infoValue.tm_infoValue")
+        if views_node:
+            views = views_node.text(strip=True)
+        else:
+            logger.error("Failed to extract views from video page: %s", self.url)
+            views = None
+
+        publish_date_node = parser.css_first("span.publishedDate")
+        if publish_date_node:
+            publish_date = publish_date_node.text(strip=True)
+        else:
+            logger.error("Failed to extract publish_date from video page: %s", self.url)
+            publish_date = None
+
+        author_node = parser.css_first("div.submitByLink > a")
+        if author_node and (href := author_node.attributes.get("href")):
+            author_link = f"https://www.youporn.com{href}" if href.startswith("/") else href
+        else:
+            logger.error("Failed to extract author_link from video page: %s", self.url)
+            author_link = None
+
+        thumbnail = None
+        if match := re.search(r"poster:\s*['\"](.*?)['\"]", html_content):
+            thumbnail = match.group(1)
+        elif match := re.search(r'"image_url":\s*"(.*?)"', html_content):
+            thumbnail = match.group(1).replace(r"\/", "/")
+        elif poster_img := parser.css_first("img.videoElementPoster"):
+            thumbnail = poster_img.attributes.get("src")
+
+        if not thumbnail:
+            logger.error("Failed to extract thumbnail from video page: %s", self.url)
+
+        categories = [
+            c.text(strip=True)
+            for c in (parser.css("div.js_categoriesWrapper a.categories-tags") or parser.css("a.categories-tags"))
+            if c.text(strip=True)
+        ]
+
+        wrapper = parser.css_first("div.js_categoriesWrapper") or parser.css_first("div.video-tags-carousel")
+        tags = [
+            t.text(strip=True)
+            for t in (wrapper.css("a[href*='/porntags/'], a[href*='/tags/']") if wrapper else parser.css("a.bubble-porntag[href*='/porntags/']"))
+            if t.text(strip=True)
+        ]
+
+        pornstars_ = parser.css("a.metaDataPornstarLink.tm_pornstar_link") or parser.css("div#metaDataPornstarInfo a")
+        urls = [href for p in pornstars_ if (href := p.attributes.get("href"))]
+
+        video_id = self.video_id
+        if not video_id:
+            if v_node := (parser.css_first("[data-video-id]") or parser.css_first("[data-videoid]")):
+                video_id = v_node.attributes.get("data-video-id") or v_node.attributes.get("data-videoid")
+            elif match := re.search(r'videoId\s*=\s*(\d+)', html_content):
+                video_id = match.group(1)
+            elif match := re.search(r'/watch/(\d+)', getattr(self, "url", "")):
+                video_id = match.group(1)
+
+        btn = parser.css_first("button.js_subscribe_btn")
+        uploader_id = self.uploader_id or (btn.attributes.get("data-entityid") if btn else None)
+        uploader_name = (
+            self.uploader_name
+            or (author_node.text(strip=True) if author_node else None)
+            or (btn.attributes.get("data-entityname") if btn else None)
+        )
+        uploader_type = self.uploader_type or (btn.attributes.get("data-entitytype") if btn else None)
+        if not uploader_type and author_link:
+            if "/channel/" in author_link:
+                uploader_type = "channel"
+            elif "/pornstar/" in author_link:
+                uploader_type = "pornstar"
+            elif "/amateur/" in author_link:
+                uploader_type = "amateur"
 
         return {
             "title": title,
@@ -401,16 +654,22 @@ class Video(BaseMedia):
             "author_link": author_link,
             "thumbnail": thumbnail,
             "categories": categories,
-            "pornstars_urls": urls
+            "tags": tags,
+            "pornstars_urls": urls,
+            "video_id": video_id,
+            "uploader_id": uploader_id,
+            "uploader_name": uploader_name,
+            "uploader_type": uploader_type,
         }
 
 
     @property
     async def pornstars(self, html: bool = True) -> AsyncGenerator[Pornstar, None]:
-        pornstars_urls = await self.get_field("pornstars_urls")
+        pornstars_urls = await self.get_field("pornstars_urls") or []
         logger.info(f"Getting pornstars for Video: {self.title}")
         for url in pornstars_urls:
-            star = Pornstar(url=f"https://www.youporn.com{url}", core=self.core)
+            star_url = url if url.startswith("http") else f"https://www.youporn.com{url}"
+            star = Pornstar(url=star_url, core=self.core)
             if html:
                 await star.load_sources("html")
             yield star
@@ -424,6 +683,8 @@ class Video(BaseMedia):
         """
         try:
             await self.load_fields("title", "m3u8_base_url", "is_hls")
+            if not self.m3u8_base_url:
+                raise DownloadFailed(f"Download failed for {self.url}: No stream URL available")
             config = copy.deepcopy(configuration)
             config_backup = copy.deepcopy(backup_configuration)
             logger.info(f"Starting download for video: {self.title or self.url}")
