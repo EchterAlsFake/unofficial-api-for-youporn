@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import os
 import re
-import copy
 import json
 import asyncio
 import logging
 import argparse
 from urllib.parse import unquote
 
-from base_api.modules.logger import configure_app_logging
+from youporn_api.modules import errors as provider_errors
+from base_api.modules.provider import fetch_content, download_errors, prepare_download_config
+from base_api.modules.logger import configure_app_logging, get_logger
 
 from base_api.modules.static_functions import str_to_bool
 
@@ -38,15 +38,6 @@ from base_api import (
     default_on_error,
     scrape_stream,
 )
-from base_api.modules.errors import (
-    DownloadCancelled,
-    BotProtectionDetected,
-    HTTPStatusError,
-    InvalidProxy,
-    NetworkRequestError,
-    ResourceGone,
-    UnknownError,
-)
 
 from youporn_api.modules.consts import (extractor_html, region_locked_pattern, headers, build_master_playlist,
                                         pick_best_mp4)
@@ -54,43 +45,16 @@ from youporn_api.modules.errors import (VideoUnavailable, NetworkError, ProxyErr
                                         RegionBlocked, DownloadFailed)
 
 
-logger = logging.getLogger(name="YouPorn API")
-logger.addHandler(logging.NullHandler())
+logger = get_logger(__name__)
 
 
 _contains_resource_gone = is_resource_gone
 on_error = default_on_error
 
 
-async def get_html_content(core: BaseCore, url: str) -> str:
-    try:
-        return await core.fetch_text(url)
-
-    except HTTPStatusError as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        if e.status_code == 404:
-            raise VideoUnavailable(f"Video is not available: {url}") from e
-        raise NetworkError(f"Request failed for {url}: {e}") from e
-
-    except NetworkRequestError as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise NetworkError(f"Request failed for {url}: {e}") from e
-
-    except InvalidProxy as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise ProxyError(f"Request failed for {url}: {e}") from e
-
-    except BotProtectionDetected as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise BotDetection(f"Request failed for {url}: {e}") from e
-
-    except UnknownError as e:
-        logger.exception("Request failed for %s: %s", url, e)
-        raise UnknownNetworkError(f"Request failed for {url}: {e}") from e
-
-    except Exception:
-        logger.exception("Failed to fetch or decode response for %s", url)
-        raise
+async def get_html_content(core: BaseCore, url: str, *, owner=None) -> str:
+    return await fetch_content(core, url, logger=logger, owner=owner,
+                               error_types=provider_errors, not_found_error=VideoUnavailable)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -106,7 +70,7 @@ class BaseProfile(BaseMedia):
 
     async def _load_html(self) -> dict[str, object]:
         logger.info(f"Loading {self.__class__.__name__} HTML from {self.url}")
-        html_content = await get_html_content(core=self.core, url=self.url)
+        html_content = await get_html_content(core=self.core, url=self.url, owner=self)
         logger.debug(f"Received HTML Content for: {self.url}")
         return await asyncio.to_thread(self._extract_data, html_content)
 
@@ -281,7 +245,7 @@ class Collection(BaseMedia):
 
     async def _load_html(self) -> dict[str, object]:
         logger.info(f"Loading Collection HTML from {self.url}")
-        html_content = await get_html_content(core=self.core, url=self.url)
+        html_content = await get_html_content(core=self.core, url=self.url, owner=self)
         data = await asyncio.to_thread(self._extract_data, html_content)
         logger.debug("Finished extracting attributes for Collection")
         return data
@@ -428,7 +392,7 @@ class User(BaseMedia):
 
     async def _load_html(self) -> dict[str, object]:
         logger.info(f"Loading User HTML from {self.url}")
-        html_content = await get_html_content(core=self.core, url=self.url)
+        html_content = await get_html_content(core=self.core, url=self.url, owner=self)
         return await asyncio.to_thread(self._extract_data, html_content)
 
     @staticmethod
@@ -489,7 +453,7 @@ class Video(BaseMedia):
     async def _load_html(self) -> dict[str, object]:
 
         logger.info(f"Loading Video HTML from {self.url}")
-        html_content = await get_html_content(core=self.core, url=self.url)
+        html_content = await get_html_content(core=self.core, url=self.url, owner=self)
 
         if region_locked_pattern.search(html_content):
             logger.warning(f"Video {self.url} is region blocked")
@@ -503,7 +467,7 @@ class Video(BaseMedia):
             logger.error("Failed to extract variants URL for video %s", self.url)
         else:
             try:
-                variants_json_str = await get_html_content(core=self.core, url=variants_url)
+                variants_json_str = await get_html_content(core=self.core, url=variants_url, owner=self)
                 variants = json.loads(variants_json_str)
 
                 try:
@@ -515,7 +479,7 @@ class Video(BaseMedia):
                     logger.warning("Failed to build HLS playlist for %s; trying MP4 variants from %s", self.url, variants_url, exc_info=True)
                     m3u8_base_url = pick_best_mp4(variants)
                     is_hls = False
-                    logger.debug(f"Video {self.url} is using raw MP4 stream")
+                    logger.debug(f"Video {self.url} is using raw MP4 stream", exc_info=True)
             except Exception as e:
                 logger.exception("Failed to load video stream variants for %s: %s", self.url, e)
 
@@ -674,45 +638,30 @@ class Video(BaseMedia):
                 await star.load_sources("html")
             yield star
 
+    @download_errors(DownloadFailed)
     async def download(self, configuration: DownloadConfigHLS, backup_configuration: DownloadConfigRAW | None = None
                        ) -> bool | DownloadReport:
-        """
-        :param configuration:
-        :param backup_configuration:
-        :return:
-        """
-        try:
-            await self.load_fields("title", "m3u8_base_url", "is_hls")
-            if not self.m3u8_base_url:
-                raise DownloadFailed(f"Download failed for {self.url}: No stream URL available")
-            config = copy.deepcopy(configuration)
-            config_backup = copy.deepcopy(backup_configuration)
-            logger.info(f"Starting download for video: {self.title or self.url}")
-            if not config.no_title:
-                config.path = os.path.join(config.path, f"{self.title}.mp4")
+        await self.load_fields("title", "m3u8_base_url", "is_hls")
+        if not self.m3u8_base_url:
+            raise DownloadFailed(f"Download failed for {self.url}: No stream URL available")
+        config = prepare_download_config(configuration, self.title)
+        config_backup = (prepare_download_config(backup_configuration, self.title)
+                         if backup_configuration is not None else None)
+        logger.info(f"Starting download for video: {self.title or self.url}")
+        config.m3u8_base_url = self.m3u8_base_url
 
-                if config_backup:
-                    config_backup.path = os.path.join(config_backup.path, f"{self.title}.mp4")
+        if not self.is_hls:
+            assert isinstance(config_backup, DownloadConfigRAW), """
+            The video you choose to download does not have an HLS stream. I tried falling back to raw video
+            downloading over direct download links, but you did not provide a configuration for this case.
 
-            config.m3u8_base_url = self.m3u8_base_url
+            Please supply a DownloadConfigRAW for the 'back_configuration' argument in this download function.
+            Thanks :)
+            """
+            logger.info(f"Falling back to legacy download for video: {self.title or self.url}")
+            return await self.core.legacy_download(configuration=config_backup, url=self.m3u8_base_url)
 
-            if not self.is_hls:
-                assert isinstance(config_backup, DownloadConfigRAW), """
-                The video you choose to download does not have an HLS stream. I tried falling back to raw video
-                downloading over direct download links, but you did not provide a configuration for this case.
-
-                Please supply a DownloadConfigRAW for the 'back_configuration' argument in this download function.
-                Thanks :)
-                """
-                logger.info(f"Falling back to legacy download for video: {self.title or self.url}")
-                return await self.core.legacy_download(configuration=config_backup, url=self.m3u8_base_url)
-
-            return await self.core.download(configuration=config)
-        except DownloadCancelled:
-            raise
-        except Exception as e:
-            logger.exception("Download failed for %s: %s", self.url, e)
-            raise DownloadFailed(f"Download failed for {self.url}: {e}") from e
+        return await self.core.download(configuration=config)
 
     async def author(self, load_html: bool = True) -> Pornstar | Channel:
         link = await self.get_field("author_link")
