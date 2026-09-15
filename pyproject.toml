@@ -62,6 +62,3 @@ packages = { find = {} }
 module-name = "youporn_api"
 module-root = ""
 
-[tool.uv.sources]
-eaf-base-api = { path = "../eaf_base_api" }
-
