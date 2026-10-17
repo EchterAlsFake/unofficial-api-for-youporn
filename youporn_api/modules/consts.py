@@ -1,3 +1,4 @@
+from urllib.parse import urljoin
 import re
 from selectolax.lexbor import LexborHTMLParser
 
@@ -28,7 +29,7 @@ BPS_FALLBACK = {
     240:  500_000,
 }
 
-def extractor_html(content: str):
+def extractor_html(content: str, base_url: str = "https://www.youporn.com"):
     results = []
     lexbor = LexborHTMLParser(content)
     selector = "article.video-box.pc.js_video-box.js-pop"
@@ -45,15 +46,15 @@ def extractor_html(content: str):
         video_link = video_object.css_first("a").attributes.get("href")
         if not video_link:
             continue
-        url = f"https://youporn.com{video_link}"
+        url = urljoin(base_url, video_link)
         video_id = video_object.attributes.get("data-video-id")
         uploader_id = video_object.attributes.get("data-uploader-id")
         uploader_status = video_object.attributes.get("data-uploader-status")
         uploader_type = video_object.attributes.get("data-uploader-type")
         uploader_name = video_object.attributes.get("data-uploader-name")
         title = video_object.attributes.get("aria-label")
-        author_link = f"https://www.youporn.com{video_object.css_first('a.author-title-text').attributes.get('href')}"
-        pornstars_urls = [f"https://youporn.com{stuff.attributes.get('href')}" for stuff in video_object.css("a.channel-performer")]
+        author_link = urljoin(base_url, video_object.css_first("a.author-title-text").attributes.get("href") or "") if video_object.css_first("a.author-title-text") else None
+        pornstars_urls = [urljoin(base_url, stuff.attributes.get("href") or "") for stuff in video_object.css("a.channel-performer")]
         info_views = video_object.css("span.info-views")
         if len(info_views) >= 2:
             views = info_views[0].text(strip=True).replace("Views:", "").strip()

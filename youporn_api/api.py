@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import partial
 import json
 import asyncio
 import logging
@@ -8,6 +9,9 @@ import argparse
 from urllib.parse import unquote
 
 from youporn_api.modules import errors as provider_errors
+from base_api import replace_url_path, update_url_query
+from urllib.parse import urlsplit
+from base_api import profile_base_url
 from base_api.modules.provider import fetch_content, download_errors, prepare_download_config
 from base_api.modules.logger import configure_app_logging, get_logger
 
@@ -59,6 +63,10 @@ async def get_html_content(core: BaseCore, url: str, *, owner=None) -> str:
 
 @dataclass(slots=True, kw_only=True)
 class BaseProfile(BaseMedia):
+
+    def __post_init__(self):
+        profile_base_url(self.url, depth=2)
+
     url: str
     core: BaseCore
     name: str | None = media_field("html")
@@ -148,8 +156,8 @@ class BaseProfile(BaseMedia):
         pages: int = 2,
         iterator_config: IteratorConfig | None = None,
     ) -> AsyncGenerator[ScrapeResult[Video], None]:
-        base_url = self.url.rstrip("/")
-        page_urls = [f"{base_url}/?page={page}" for page in range(1, pages + 1)]
+        base_url = self.resolved_url or self.url
+        page_urls = [update_url_query(base_url, page=page) for page in range(1, pages + 1)]
         logger.info(f"Requesting {self.__class__.__name__.lower()} videos from urls: {page_urls}")
         if iterator_config is None:
             iterator_config = make_iterator_config()
@@ -158,7 +166,7 @@ class BaseProfile(BaseMedia):
             core=self.core,
             constructor=Video,
             target_page_urls=page_urls,
-            item_extractor=extractor_html,
+            item_extractor=partial(extractor_html, base_url=base_url),
             iterator_config=iterator_config,
         )
 
@@ -233,6 +241,10 @@ class Channel(BaseProfile):
 
 @dataclass(slots=True, kw_only=True)
 class Collection(BaseMedia):
+
+    def __post_init__(self):
+        profile_base_url(self.url, depth=3)
+
     url: str
     core: BaseCore
     name: str | None = media_field("html")
@@ -273,8 +285,8 @@ class Collection(BaseMedia):
         iterator_config: IteratorConfig | None = None,
     ) -> AsyncGenerator[ScrapeResult[Video], None]:
 
-        url = self.url
-        page_urls = [f"{url}?page={page}" for page in range(1, pages + 1)]
+        url = self.resolved_url or self.url
+        page_urls = [update_url_query(url, page=page) for page in range(1, pages + 1)]
         logger.info(f"Requesting collection videos from urls: {page_urls}")
         if iterator_config is None:
             iterator_config = make_iterator_config()
@@ -283,7 +295,7 @@ class Collection(BaseMedia):
             core=self.core,
             constructor=Video,
             target_page_urls=page_urls,
-            item_extractor=extractor_html,
+            item_extractor=partial(extractor_html, base_url=url),
             iterator_config=iterator_config,
         )
 
@@ -449,6 +461,11 @@ class Video(BaseMedia):
     is_hls: bool | None = media_field("html")
 
     loader_methods: ClassVar[dict[str, str]] = {"html": "_load_html"}
+
+    def __post_init__(self):
+        match = re.match(r"/embed/(\d+)(?:/|$)", urlsplit(self.url).path)
+        if match:
+            self.url = replace_url_path(self.url, f"/watch/{match.group(1)}/")
 
     async def _load_html(self) -> dict[str, object]:
 
