@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+*.py[cod]
+.coverage*
+.venv/
+*.mp4
+*.mp4.tmp

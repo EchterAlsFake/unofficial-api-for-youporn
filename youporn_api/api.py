@@ -6,7 +6,7 @@ import json
 import asyncio
 import logging
 import argparse
-from urllib.parse import unquote
+from urllib.parse import unquote, quote_plus, urljoin
 
 from youporn_api.modules import errors as provider_errors
 from base_api import replace_url_path, update_url_query
@@ -22,7 +22,7 @@ from curl_cffi import AsyncSession
 from selectolax.lexbor import LexborHTMLParser
 from typing import AsyncGenerator, ClassVar, Literal
 from base_api.modules.type_hints import DownloadReport
-from base_api.modules.config import IteratorConfig
+from base_api.modules.config import IteratorConfig, RuntimeConfig
 from base_api import (
     BaseCore,
     BaseMedia,
@@ -266,11 +266,16 @@ class Collection(BaseMedia):
     def _extract_data(html_content: str) -> dict:
         parser = LexborHTMLParser(html_content)
 
-        name = parser.css_first("div.top-section").css_first("h4").text().replace("Collection:", "").strip()
-        rating = parser.css_first("div.featureCollectionRating").text(strip=True)
-        total_videos_count = parser.css_first("p.collection-videos-count").text(strip=True)
-        view_count = parser.css_first("div.top-section").css("li")[1].css_first("p").text(strip=True)
-        last_updated = parser.css_first("li.lastUpdated > p").text(strip=True)
+        def text(selector):
+            node = parser.css_first(selector)
+            return node.text(strip=True) if node else None
+
+        heading = text("div.top-section h4")
+        name = heading.replace("Collection:", "").strip() if heading else None
+        rating = text("div.featureCollectionRating")
+        total_videos_count = text("p.collection-videos-count")
+        view_count = text("div.top-section li:nth-child(2) p")
+        last_updated = text("li.lastUpdated > p")
         return {
             "name": name,
             "rating": rating,
@@ -410,14 +415,17 @@ class User(BaseMedia):
     @staticmethod
     def _extract_data(html_content: str) -> dict:
         parser = LexborHTMLParser(html_content)
-        name = parser.css_first("h1.name-title").text(strip=True)
+        heading = parser.css_first("h1.name-title")
+        name = heading.text(strip=True) if heading else None
 
         container = parser.css_first("ul.playlists_list")
-        _collections = container.css("li.playlists-container")
+        _collections = container.css("li.playlists-container") if container else []
         urls = []
 
         for collection_container in _collections:
-            urls.append(f'https://youporn.com{collection_container.css_first("a").attributes.get("href")}')
+            link = collection_container.css_first("a[href]")
+            if link and (href := link.attributes.get("href")):
+                urls.append(urljoin("https://www.youporn.com", href))
 
         return {
             "name": name,
@@ -426,7 +434,7 @@ class User(BaseMedia):
 
     async def get_collections(self, load_html: bool = True) -> AsyncGenerator[Collection, None]:
         collection_urls = await self.get_field("collection_urls")
-        logger.info(f"Getting collections for User: {self.name or self.url}")
+        logger.info("Getting collections for User: %s", self.url)
         for collection_url in collection_urls:
             collection = Collection(url=collection_url, core=self.core)
             if load_html:
@@ -647,7 +655,7 @@ class Video(BaseMedia):
     @property
     async def pornstars(self, html: bool = True) -> AsyncGenerator[Pornstar, None]:
         pornstars_urls = await self.get_field("pornstars_urls") or []
-        logger.info(f"Getting pornstars for Video: {self.title}")
+        logger.info("Getting pornstars for Video: %s", self.url)
         for url in pornstars_urls:
             star_url = url if url.startswith("http") else f"https://www.youporn.com{url}"
             star = Pornstar(url=star_url, core=self.core)
@@ -684,7 +692,7 @@ class Video(BaseMedia):
         link = await self.get_field("author_link")
         if not isinstance(link, str):
             raise ValueError(f"No author link found for {self.url}")
-        logger.info(f"Fetching author for video {self.title or self.url}: {link}")
+        logger.info("Fetching author for video %s: %s", self.url, link)
         if "channel" in link:
             channel = Channel(url=link, core=self.core)
             if load_html:
@@ -747,7 +755,7 @@ class Client:
                       iterator_config: IteratorConfig | None = None,
                       ) -> AsyncGenerator[ScrapeResult[Video], None]:
         # Define basic filters
-        query = query.replace(" ", "+")
+        query = quote_plus(query)
         res = ""
         min_minutes = ""
         max_minutes = ""
@@ -770,7 +778,7 @@ class Client:
 
         page_urls = [
             f"https://www.youporn.com{filter}{query}{res}{min_minutes}{max_minutes}page={page}"
-            for page in range(1, pages + 1)
+            for page in range(1, max(1, pages) + 1)
         ]
 
         if iterator_config is None:
@@ -814,18 +822,21 @@ async def run_main(args_list: list[str] | None = None):
         parser.print_help()
         return
 
-    client = Client()
-    for url in urls:
-        print(f"Fetching video information for: {url}")
-        try:
-            video = await client.get_video(url, load_html=True)
-            title = getattr(video, "title", None) or url
-            print(f"Starting download for: {title}")
-            await video.download(configuration=config, backup_configuration=raw_config)
-            print(f"Download complete: {title}")
-        except Exception as e:
-            logger.exception("CLI failed while processing %s", url)
-            print(f"Error downloading {url}: {e}")
+    async with BaseCore(RuntimeConfig()) as core:
+        client = Client(core=core)
+        for url in urls:
+            print(f"Fetching video information for: {url}")
+            try:
+                video = await client.get_video(url, load_html=True)
+                title = getattr(video, "title", None) or url
+                print(f"Starting download for: {title}")
+                result = await video.download(configuration=config, backup_configuration=raw_config)
+                if result is False or getattr(result, "status", None) == "failed":
+                    raise DownloadFailed("Download did not complete")
+                print(f"Download complete: {title}")
+            except Exception as e:
+                logger.exception("CLI failed while processing %s", url)
+                print(f"Error downloading {url}: {e}")
 
 
 def main():

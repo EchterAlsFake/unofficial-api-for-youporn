@@ -33,17 +33,14 @@ def extractor_html(content: str, base_url: str = "https://www.youporn.com"):
     results = []
     lexbor = LexborHTMLParser(content)
     selector = "article.video-box.pc.js_video-box.js-pop"
-    try:
-        main_container = lexbor.css_first("div.full-row-thumbs")
-        videos_container = main_container.css(selector)
-
-    except AttributeError:
-        main_container = lexbor.css_first("div.three-thumbs-row")
-        videos_container = main_container.css(selector)
+    main_container = (lexbor.css_first("div.full-row-thumbs")
+                      or lexbor.css_first("div.three-thumbs-row") or lexbor)
+    videos_container = main_container.css(selector)
 
     # Fetch content from HTML, if page = 0, to reduce one network request
     for video_object in videos_container:
-        video_link = video_object.css_first("a").attributes.get("href")
+        link = video_object.css_first("a[href]")
+        video_link = link.attributes.get("href") if link else None
         if not video_link:
             continue
         url = urljoin(base_url, video_link)
