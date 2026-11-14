@@ -457,6 +457,7 @@ class Video(BaseMedia):
     m3u8_base_url: str | None = media_field("html")
     author_link: str | None = media_field("html")
     pornstars_urls: list[str] | None = media_field("html")
+    performers: list[dict] | None = media_field("html")
 
     # Available from HTML or iterator
     uploader_id: str | None = media_field("html", default=None)
@@ -608,6 +609,8 @@ class Video(BaseMedia):
 
         pornstars_ = parser.css("a.metaDataPornstarLink.tm_pornstar_link") or parser.css("div#metaDataPornstarInfo a")
         urls = [href for p in pornstars_ if (href := p.attributes.get("href"))]
+        performers = [{"name": p.text(strip=True), "url": href} for p in pornstars_
+                      if p.text(strip=True) and (href := p.attributes.get("href"))]
 
         video_id = self.video_id
         if not video_id:
@@ -645,6 +648,7 @@ class Video(BaseMedia):
             "categories": categories,
             "tags": tags,
             "pornstars_urls": urls,
+            "performers": performers,
             "video_id": video_id,
             "uploader_id": uploader_id,
             "uploader_name": uploader_name,

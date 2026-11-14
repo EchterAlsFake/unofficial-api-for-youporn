@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.4 - 2026-11-14
+
+- Retain scene cast link labels alongside existing performer URLs for metadata export.
+
 ## 1.8.3 — 2026-10-27
 
 - Fetch search results with default arguments and encode search queries correctly.
