@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from base_api import paginated_stream, PageInfo, validate_pagination
+from base_api.modules.pagination import linked_page
+
 import re
 from functools import partial
 import json
@@ -153,21 +156,27 @@ class BaseProfile(BaseMedia):
 
     def videos(
         self,
-        pages: int = 2,
+        pages: int | str = 1,
         iterator_config: IteratorConfig | None = None,
+        *,
+        start_page: int = 1,
     ) -> AsyncGenerator[ScrapeResult[Video], None]:
+        validate_pagination(pages, start_page)
         base_url = self.resolved_url or self.url
-        page_urls = [update_url_query(base_url, page=page) for page in range(1, pages + 1)]
-        logger.info(f"Requesting {self.__class__.__name__.lower()} videos from urls: {page_urls}")
+        page_url = lambda page: update_url_query(base_url, page=page)
         if iterator_config is None:
             iterator_config = make_iterator_config()
-
-        return scrape_stream(
+        return paginated_stream(
             core=self.core,
             constructor=Video,
-            target_page_urls=page_urls,
             item_extractor=partial(extractor_html, base_url=base_url),
             iterator_config=iterator_config,
+            page_url=page_url,
+            pages=pages,
+            start_page=start_page,
+            page_info=lambda content, page, rows: _pagination_info(
+                content, page, rows, page_url=page_url
+            ),
         )
 
 
@@ -286,23 +295,29 @@ class Collection(BaseMedia):
 
     def videos(
         self,
-        pages: int = 2,
+        pages: int | str = 1,
         iterator_config: IteratorConfig | None = None,
+        *,
+        start_page: int = 1,
     ) -> AsyncGenerator[ScrapeResult[Video], None]:
-
+        validate_pagination(pages, start_page)
         url = self.resolved_url or self.url
-        page_urls = [update_url_query(url, page=page) for page in range(1, pages + 1)]
-        logger.info(f"Requesting collection videos from urls: {page_urls}")
+        page_url = lambda page: update_url_query(url, page=page)
         if iterator_config is None:
             iterator_config = make_iterator_config()
-
-        return scrape_stream(
+        return paginated_stream(
             core=self.core,
             constructor=Video,
-            target_page_urls=page_urls,
             item_extractor=partial(extractor_html, base_url=url),
             iterator_config=iterator_config,
+            page_url=page_url,
+            pages=pages,
+            start_page=start_page,
+            page_info=lambda content, page, rows: _pagination_info(
+                content, page, rows, page_url=page_url
+            ),
         )
+
 
 @dataclass(slots=True, kw_only=True)
 class Pornstar(BaseProfile):
@@ -743,58 +758,56 @@ class Client:
             await collection.load_sources("html")
         return collection
 
-    def search_videos(self, query: str, pages: int = 0,
-                      filter_relevance: Literal[
-                          "views", "rating", "date", "duration"
-                      ] | None = None,
-                      filter_duration_minimum: Literal[
-                          "10", "20", "30", "40", "50", "60"
-                      ] | None = None,
-                      filter_duration_maximum: Literal[
-                          "10", "20", "30", "40", "50", "60"
-                      ] | None = None,
-                      filter_resolution: Literal[
-                          "VR", "HD"
-                      ] | None = None,
-                      iterator_config: IteratorConfig | None = None,
-                      ) -> AsyncGenerator[ScrapeResult[Video], None]:
-        # Define basic filters
+    def search_videos(
+        self,
+        query: str,
+        pages: int | str = 1,
+        filter_relevance: Literal["views", "rating", "date", "duration"] | None = None,
+        filter_duration_minimum: Literal["10", "20", "30", "40", "50", "60"]
+        | None = None,
+        filter_duration_maximum: Literal["10", "20", "30", "40", "50", "60"]
+        | None = None,
+        filter_resolution: Literal["VR", "HD"] | None = None,
+        iterator_config: IteratorConfig | None = None,
+        *,
+        start_page: int = 1,
+    ) -> AsyncGenerator[ScrapeResult[Video], None]:
+        validate_pagination(pages, start_page)
         query = quote_plus(query)
         res = ""
         min_minutes = ""
         max_minutes = ""
-
         query = f"query={query}&"
-
         filter = "/search/?"
-
         if filter_relevance:
             filter = f"/search/{filter_relevance}/?"
-
         if filter_resolution:
             res = f"res={filter_resolution}&"
-
         if filter_duration_minimum:
             min_minutes = f"min_minutes={filter_duration_minimum}&"
-
         if filter_duration_maximum:
             max_minutes = f"max_minutes={filter_duration_maximum}&"
-
-        page_urls = [
+        page_url = lambda page: (
             f"https://www.youporn.com{filter}{query}{res}{min_minutes}{max_minutes}page={page}"
-            for page in range(1, max(1, pages) + 1)
-        ]
-
+        )
         if iterator_config is None:
             iterator_config = make_iterator_config()
-
-        return scrape_stream(
+        return paginated_stream(
             core=self.core,
             constructor=Video,
-            target_page_urls=page_urls,
             item_extractor=extractor_html,
             iterator_config=iterator_config,
+            page_url=page_url,
+            pages=pages,
+            start_page=start_page,
+            page_info=lambda content, page, rows: _pagination_info(
+                content, page, rows, page_url=page_url
+            ),
         )
+
+
+def _pagination_info(content, page, rows, *, page_url):
+    return linked_page(content, page, rows, page_url=page_url)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -853,3 +866,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

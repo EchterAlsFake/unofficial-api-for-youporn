@@ -1,3 +1,18 @@
+# 2.0.0
+
+Release 2.0.0
+
+Update pagination handling, validation, and documentation.
+
+Changes since v1.8.4:
+
+```text
+README.md          |  13 +++++++
+ pyproject.toml     |   4 +--
+ youporn_api/api.py | 100 ++++++++++++++++++++++++++++++-----------------------
+ 3 files changed, 72 insertions(+), 45 deletions(-)
+```
+
 # Changelog
 
 ## 1.8.4 - 2026-11-14
